@@ -1,0 +1,103 @@
+#!/usr/bin/env python
+#
+# raindance
+#
+# For each frame, take the transpose, find the edges of the active objects,
+# denoise there only, then XOR the inverse of that from the transpose cutout,
+# preserving everything but the denoised part, then show the frame.
+#
+# NOTE: you need to start with an image that was processed to the color scheme
+# resulting from /home/martin/cty/cv/py/lab/background+flow
+#
+# Sep. 29, 2014 - Martin McGreal
+#
+
+import cv2
+import numpy as np
+import argparse
+from PIL import Image
+
+
+def draw_flow(im, flow, step=16):
+    h, w = im.shape[:2]
+    y, x = np.mgrid[step/2:h:step, step/2:w:step].reshape(2,-1)
+    fx, fy = flow[y,x].T
+
+    lines = np.vstack([x,y,x+fx,y+fy]).T.reshape(-1,2,2)
+    lines = np.int32(lines)
+
+    vis = cv2.cvtColor(im,cv2.COLOR_GRAY2BGR)
+    for (x1,y1),(x2,y2) in lines:
+        cv2.line(vis,(x1,y1),(x2,y2),(0,255,0),1)
+        cv2.circle(vis,(x1,y1),1,(0,255,0),-1)
+
+    return vis
+
+
+def scale_image(im, factor):
+    height = im.shape[0]*factor
+    width = im.shape[1]*factor
+
+    return cv2.resize(im, (width, height))
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--camera', dest='camera', type=int, default=0, help="Specify the camera index.")
+parser.add_argument('--bgsubtractor', dest='bgsubtractor', type=str, default="KNN", help="Specify the background subtractor to use.")
+args = parser.parse_args()
+
+
+# Change the scaling factor to 1 to avoid scaling the image.
+sfact = 2
+
+cap = cv2.VideoCapture(args.camera)
+
+kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(3,3))
+
+if args.bgsubtractor == "MOG":
+    fgbg = cv2.createBackgroundSubtractorMOG()
+elif args.bgsubtractor == "MOG2":
+    fgbg = cv2.createBackgroundSubtractorMOG2()
+elif args.bgsubtractor == "GMG":
+    fgbg = cv2.createBackgroundSubtractorGMG()
+elif args.bgsubtractor == "KNN":
+    fgbg = cv2.createBackgroundSubtractorKNN(history=10)
+
+ret, im = cap.read()
+
+im_prev = cv2.morphologyEx(fgbg.apply(cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)), cv2.MORPH_OPEN, kernel)
+
+while True:
+    ret, im = cap.read()
+
+    im = cv2.morphologyEx(fgbg.apply(cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)), cv2.MORPH_OPEN, kernel)
+
+    flow = cv2.calcOpticalFlowFarneback(im_prev, im, None, 0.5,3,15,3,5,1.2,0)
+    im_prev = im
+
+    im = draw_flow(im, flow, 8)
+    print "im.shape(1): "+str(im.shape)
+    im = im.T.reshape(640,480,3)
+    print "im.shape(2): "+str(im.shape)
+    black = (0,0,0)
+    white = (255,255,255)
+    tempc = (123, 123, 123)
+    im[(im == black).all(axis = -1)] = tempc
+    im[(im == white).all(axis = -1)] = black
+    im[(im == tempc).all(axis = -1)] = white
+    print "im.shape(3): "+str(im.shape)
+    pim = Image.fromarray(im).crop((0,0,160,213)).rotate(270).resize((640,480))
+    im = np.array(pim)
+
+    # Change the factor to 1 to avoid scaling the image.
+    im = scale_image(im, sfact)
+
+    cv2.imshow('Optical Flow', im)
+    #cv2.imwrite('flow/'+str(time.time())+'.png', newim)
+    if cv2.waitKey(10) == 27:
+        break
+
+
+cap.release()
+cv2.destroyAllWindows()
+
