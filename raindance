@@ -12,9 +12,11 @@
 # Sep. 29, 2014 - Martin McGreal
 #
 
+import sys, os
 import cv2
 import numpy as np
 import argparse
+import time
 from PIL import Image
 
 
@@ -44,6 +46,9 @@ def scale_image(im, factor):
 parser = argparse.ArgumentParser()
 parser.add_argument('--camera', dest='camera', type=int, default=0, help="Specify the camera index.")
 parser.add_argument('--bgsubtractor', dest='bgsubtractor', type=str, default="KNN", help="Specify the background subtractor to use.")
+parser.add_argument('--writedir', dest='writedir', type=str, default="images/", help="Specify the directory to write periodic images to.")
+parser.add_argument('--winterval', dest='winterv', type=int, default=10, help="Specify the periodic interval in which to capture an image.")
+parser.add_argument('--whitebg', action='store_true', help="Swap out the black background with white.")
 args = parser.parse_args()
 
 
@@ -67,7 +72,11 @@ ret, im = cap.read()
 
 im_prev = cv2.morphologyEx(fgbg.apply(cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)), cv2.MORPH_OPEN, kernel)
 
+framecount = 0
+
 while True:
+    framecount += 1
+
     ret, im = cap.read()
 
     im = cv2.morphologyEx(fgbg.apply(cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)), cv2.MORPH_OPEN, kernel)
@@ -76,16 +85,16 @@ while True:
     im_prev = im
 
     im = draw_flow(im, flow, 8)
-    print "im.shape(1): "+str(im.shape)
     im = im.T.reshape(640,480,3)
-    print "im.shape(2): "+str(im.shape)
-    black = (0,0,0)
-    white = (255,255,255)
-    tempc = (123, 123, 123)
-    im[(im == black).all(axis = -1)] = tempc
-    im[(im == white).all(axis = -1)] = black
-    im[(im == tempc).all(axis = -1)] = white
-    print "im.shape(3): "+str(im.shape)
+
+    if args.whitebg:
+        black = (0,0,0)
+        white = (255,255,255)
+        tempc = (123, 123, 123)
+        im[(im == black).all(axis = -1)] = tempc
+        im[(im == white).all(axis = -1)] = black
+        im[(im == tempc).all(axis = -1)] = white
+
     pim = Image.fromarray(im).crop((0,0,160,213)).rotate(270).resize((640,480))
     im = np.array(pim)
 
@@ -93,10 +102,19 @@ while True:
     im = scale_image(im, sfact)
 
     cv2.imshow('Optical Flow', im)
-    #cv2.imwrite('flow/'+str(time.time())+'.png', newim)
-    if cv2.waitKey(10) == 27:
+
+    if framecount % args.winterv == 0 and os.path.isdir(args.writedir):
+        cv2.imwrite(os.path.normpath(args.writedir+'/'+str(time.time())+'.png'), im)
+
+    if cv2.waitKey(10) & 0xff == 27:
         break
 
+#    if framecount % 10 == 0:
+#        print "Frames: "+str(framecount)
+#    if framecount == 60:
+#        cap.release()
+#        cv2.destroyAllWindows()
+#        sys.exit(0)
 
 cap.release()
 cv2.destroyAllWindows()
